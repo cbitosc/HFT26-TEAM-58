@@ -16,3 +16,4 @@ ai-backend/.env
 # Android build files
 .gradle/
 build/
+venv/
