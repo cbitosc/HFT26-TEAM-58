@@ -1,52 +1,41 @@
-
 import os
-import traceback
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# ------------------------------------------------
-# 1. Load environment variables
-# ------------------------------------------------
-
+# Load environment variables from .env
 load_dotenv()
 
+# Featherless API configuration
 API_KEY = os.getenv("FEATHERLESS_API_KEY")
 BASE_URL = os.getenv(
     "FEATHERLESS_BASE_URL",
     "https://api.featherless.ai/v1"
 )
-MODEL = os.getenv("FEATHERLESS_MODEL")
+MODEL = os.getenv(
+    "FEATHERLESS_MODEL",
+    "zai-org/GLM-5.2"
+)
 
-# ------------------------------------------------
-# 2. Validate configuration
-# ------------------------------------------------
-
+# Initialize Featherless client
 if not API_KEY:
-    raise ValueError("FEATHERLESS_API_KEY is missing in .env")
-
-if not MODEL:
-    raise ValueError("FEATHERLESS_MODEL is missing in .env")
-
-# ------------------------------------------------
-# 3. Initialize Featherless client
-# ------------------------------------------------
+    raise RuntimeError(
+        "FEATHERLESS_API_KEY is missing. Add it to your .env file."
+    )
 
 client = OpenAI(
     api_key=API_KEY,
-    base_url=BASE_URL,
-    timeout=90.0,
-    max_retries=1
+    base_url=BASE_URL
 )
 
-# ------------------------------------------------
-# 4. Send prompt to Featherless AI
-# ------------------------------------------------
 
 def ask_featherless(prompt: str) -> str:
+    """
+    Send a prompt to Featherless AI and return the generated response.
+    """
 
     if not prompt or not prompt.strip():
-        raise ValueError("Prompt cannot be empty")
+        raise ValueError("Prompt cannot be empty.")
 
     try:
         response = client.chat.completions.create(
@@ -58,34 +47,28 @@ def ask_featherless(prompt: str) -> str:
                 }
             ],
             temperature=0.2,
-            max_tokens=2048
+            max_tokens=8192,
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
 
-        # Inspect model response
-        choice = response.choices[0]
+        if not response.choices:
+            raise RuntimeError("Featherless returned no response.")
 
-        print("Model:", MODEL)
-        print("Finish reason:", choice.finish_reason)
-        print("AI content:", repr(choice.message.content))
+        content = response.choices[0].message.content
 
-        # Extract generated text
-        content = choice.message.content
+        if not content or not content.strip():
+            raise RuntimeError(
+                "Featherless returned an empty response. "
+                f"Finish reason: {response.choices[0].finish_reason}"
+            )
 
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-
-        # Some reasoning models may return reasoning
-        # without a normal text response.
-        print("Empty text response received.")
-        print("Response ID:", response.id)
-        print("Usage:", response.usage)
-
-        raise RuntimeError(
-            "Featherless returned no usable text. "
-            "Check model availability and response metadata."
-        )
+        return content.strip()
 
     except Exception as error:
-        print("FEATHERLESS API ERROR:", repr(error))
-        traceback.print_exc()
-        raise
+        raise RuntimeError(
+            f"Featherless AI request failed: {error}"
+        ) from error
