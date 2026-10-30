@@ -1,0 +1,18 @@
+
+# Python virtual environment
+ai-backend/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Secret API keys
+.env
+ai-backend/.env
+
+# Testing cache
+.pytest_cache/
+
+# Android build files
+.gradle/
+build/
