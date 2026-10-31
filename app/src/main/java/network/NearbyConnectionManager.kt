@@ -3,54 +3,46 @@ package com.team58.emergencymessaging.network
 
 import android.content.Context
 import com.google.android.gms.nearby.Nearby
-import com.google.android.gms.nearby.connection.ConnectionInfo
-import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
-import com.google.android.gms.nearby.connection.ConnectionResolution
-import com.google.android.gms.nearby.connection.ConnectionsClient
-import com.google.android.gms.nearby.connection.Strategy
+import com.google.android.gms.nearby.connection.*
 
-class NearbyConnectionManager(context: Context) {
+class NearbyConnectionManager(
+    context: Context,
+    private val listener: Listener? = null
+) {
 
-    private val connectionsClient: ConnectionsClient =
-        Nearby.getConnectionsClient(context)
-
-    private val serviceId =
-        "com.team58.emergencymessaging"
-
-    private val strategy = Strategy.P2P_CLUSTER
-
-    fun startAdvertising(deviceName: String) {
-        connectionsClient.startAdvertising(
-            deviceName,
-            serviceId,
-            connectionCallback,
-            com.google.android.gms.nearby.connection.AdvertisingOptions.Builder()
-                .setStrategy(strategy)
-                .build()
-        )
+    interface Listener {
+        fun onDeviceFound(endpointId: String, deviceName: String)
+        fun onDeviceConnected(endpointId: String)
+        fun onDeviceDisconnected(endpointId: String)
+        fun onMessageReceived(endpointId: String, message: String)
+        fun onConnectionFailed(endpointId: String)
     }
 
-    fun startDiscovery(deviceName: String) {
-        connectionsClient.startDiscovery(
-            serviceId,
-            object : com.google.android.gms.nearby.connection.EndpointDiscoveryCallback() {
-                override fun onEndpointFound(
-                    endpointId: String,
-                    info: com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
-                ) {
-                    connectionsClient.requestConnection(
-                        deviceName,
-                        endpointId,
-                        connectionCallback
-                    )
-                }
+    private val client = Nearby.getConnectionsClient(context)
+    private val serviceId = "com.team58.emergencymessaging"
+    private val strategy = Strategy.P2P_CLUSTER
 
-                override fun onEndpointLost(endpointId: String) {}
-            },
-            com.google.android.gms.nearby.connection.DiscoveryOptions.Builder()
-                .setStrategy(strategy)
-                .build()
-        )
+    private val connectedEndpoints = mutableSetOf<String>()
+
+    private val payloadCallback = object : PayloadCallback() {
+
+        override fun onPayloadReceived(
+            endpointId: String,
+            payload: Payload
+        ) {
+            if (payload.type == Payload.Type.BYTES) {
+                val message = payload.asBytes()?.toString(Charsets.UTF_8)
+                if (message != null) {
+                    listener?.onMessageReceived(endpointId, message)
+                }
+            }
+        }
+
+        override fun onPayloadTransferUpdate(
+            endpointId: String,
+            update: PayloadTransferUpdate
+        ) {
+        }
     }
 
     private val connectionCallback =
@@ -60,34 +52,85 @@ class NearbyConnectionManager(context: Context) {
                 endpointId: String,
                 connectionInfo: ConnectionInfo
             ) {
-                connectionsClient.acceptConnection(endpointId, payloadCallback)
+                client.acceptConnection(endpointId, payloadCallback)
             }
 
             override fun onConnectionResult(
                 endpointId: String,
                 result: ConnectionResolution
-            ) {}
+            ) {
+                if (result.status.isSuccess) {
+                    connectedEndpoints.add(endpointId)
+                    listener?.onDeviceConnected(endpointId)
+                } else {
+                    listener?.onConnectionFailed(endpointId)
+                }
+            }
 
-            override fun onDisconnected(endpointId: String) {}
+            override fun onDisconnected(endpointId: String) {
+                connectedEndpoints.remove(endpointId)
+                listener?.onDeviceDisconnected(endpointId)
+            }
         }
 
-    private val payloadCallback =
-        object : com.google.android.gms.nearby.connection.PayloadCallback() {
+    fun startAdvertising(deviceName: String) {
+        client.startAdvertising(
+            deviceName,
+            serviceId,
+            connectionCallback,
+            AdvertisingOptions.Builder()
+                .setStrategy(strategy)
+                .build()
+        )
+    }
 
-            override fun onPayloadReceived(
-                endpointId: String,
-                payload: com.google.android.gms.nearby.connection.Payload
-            ) {}
+    fun startDiscovery(deviceName: String) {
+        client.startDiscovery(
+            serviceId,
+            object : EndpointDiscoveryCallback() {
 
-            override fun onPayloadTransferUpdate(
-                endpointId: String,
-                update: com.google.android.gms.nearby.connection.PayloadTransferUpdate
-            ) {}
-        }
+                override fun onEndpointFound(
+                    endpointId: String,
+                    info: DiscoveredEndpointInfo
+                ) {
+                    listener?.onDeviceFound(
+                        endpointId,
+                        info.endpointName
+                    )
+
+                    client.requestConnection(
+                        deviceName,
+                        endpointId,
+                        connectionCallback
+                    )
+                }
+
+                override fun onEndpointLost(endpointId: String) {
+                }
+            },
+            DiscoveryOptions.Builder()
+                .setStrategy(strategy)
+                .build()
+        )
+    }
+
+    fun sendMessage(endpointId: String, message: String) {
+        if (endpointId !in connectedEndpoints) return
+
+        client.sendPayload(
+            endpointId,
+            Payload.fromBytes(message.toByteArray(Charsets.UTF_8))
+        )
+    }
+
+    fun getConnectedDevices(): Set<String> {
+        return connectedEndpoints.toSet()
+    }
 
     fun stopAllConnections() {
-        connectionsClient.stopAdvertising()
-        connectionsClient.stopDiscovery()
-        connectionsClient.stopAllEndpoints()
+        client.stopAdvertising()
+        client.stopDiscovery()
+        client.stopAllEndpoints()
+        connectedEndpoints.clear()
     }
 }
